@@ -14,6 +14,11 @@ import inspect
 import string
 import subprocess
 import shutil
+from arcpy import env
+env.overwriteOutput = True
+arcpy.env.qualifiedFieldNames = False
+env.wokspace = "in_memory"
+ws = env.wokspace
 comandos=[] # arreglo que almacena los comandos a ejecutar por el script auxiliar
 dic_acentos={" ":"---","\xc3\xa1":"***a***","\xc3\xa9":"***e***", "\xc3\xad":"***i***",
 "\xc3\xb3": "***o***","\xc3\xba": "***u***","\xc3\xb1": "***n***","\xc3\x81":"***A***","\xc3\x89":"***E***",
@@ -45,6 +50,29 @@ def getPythonPath(): # función que localiza el directorio de instalación del i
         return pyexe
     else:
         raise RuntimeError("python.exe no se encuentra instalado en {0}".format(pydir))
+
+def generar_reporte(): # función que crea el reportes de resultados
+	fields = arcpy.ListFields(capaOrigenIrradiacion)
+	# se crea un objeto de tipo field info
+	fieldinfo = arcpy.FieldInfo()
+	for field in fields:
+		if field.name == campoAreaMax:
+			fieldinfo.addField(field.name, "Acum_Max", "VISIBLE", "")
+		else:
+			fieldinfo.addField(field.name, field.name, "HIDDEN", "")
+	tabla_basereporte = arcpy.MakeTableView_management (in_table=capaOrigenIrradiacion, out_view="basereporte", field_info=fieldinfo, workspace="in_memory")
+	arcpy.CopyRows_management (in_rows=tabla_basereporte, out_table="in_memory\\BaseReporte")
+	arcpy.AddField_management (in_table="in_memory\\BaseReporte", field_name="Id_cluster", field_type="LONG", field_alias="Id_cluster")
+	arcpy.AlterField_management (in_table="in_memory\\BaseReporte", field="Acum_Max", new_field_alias="Acum_Max")
+	arcpy.CalculateField_management (in_table="in_memory\\BaseReporte", field="Id_cluster", expression="float(!%s!)"%(capturarIdCapa("in_memory\\basereporte")), expression_type="PYTHON_9.3")
+	arcpy.CopyRows_management (in_rows="in_memory\\BaseReporte", out_table=ruta_gdb+"\\"+"BaseReporte")
+	arcpy.Statistics_analysis(in_table=capaFinalClusters, out_table="in_memory\\tabla_cluster", statistics_fields="%s SUM;Shape_Area SUM"%(campoAreaPoligono), case_field="CLUSTER")
+
+	capa=Layer(ruta_gdb+"\\"+"BaseReporte",[],ws)# instancia un objeto de la clase Layer para aceder a sus propiedades
+	arcpy.AlterField_management (in_table="in_memory\\tabla_cluster", field="SUM_%s"%(campoAreaPoligono), new_field_name="Mag_Acum_Total", new_field_alias="Mag_Acum_Total")
+	arcpy.AlterField_management (in_table="in_memory\\tabla_cluster", field="SUM_Shape_Area", new_field_name="Area_Acum_Total", new_field_alias="Area_Acum_Total")
+	capa.addjoinCursorMultiple("in_memory\\tabla_cluster","Id_cluster","CLUSTER",["Mag_Acum_Total","Area_Acum_Total"]) # realiza un addjoin cursor multiple entre las capas especificadas
+
 
 def listaanidada(lista,separador): #convierte un arreglo en una lista anidada
     seq = tuple(lista)
@@ -90,6 +118,82 @@ def calculoNearGeneral(capaOrigenI, capaObjetoC): # asigna a cada cuadro el punt
     arcpy.AddMessage(time.strftime("%c") + " " + "Ejecutando Calculo Near...")
     capaNear = arcpy.Near_analysis(capaObjetoC, capaOrigenI, '#', 'NO_LOCATION', 'NO_ANGLE', 'PLANAR')
     arcpy.AddMessage("Finaliza Calculo Near")
+
+
+class Layer(object):
+
+        def __init__(self,inFeature,campos_visibles,ws):  # funcion que incializa la clase e instancia el objeto de tipo layer
+            self.feature=r"%s"%inFeature # esta propiedad almacena el feature clas del objeto
+            self.ruta="" # almacena la ruta del feature layer
+            self.nombre=arcpy.Describe(self.feature).name # almacena el nombre de la capa
+            self.camposFeature=arcpy.ListFields(self.feature) # almacena los campos del feature class
+            self.camposLayer="" # almacena los campos del layer
+            self.toLayer(campos_visibles) # almacena el workspace que en este caso es en memoria
+
+        def toLayer(self,campos_visibles): # crea un objeto a partir del feature de entrada y los campos visibles
+            fields= arcpy.ListFields(self.feature)
+            fieldinfo = arcpy.FieldInfo()
+
+            if campos_visibles!=[]:
+                for field in fields:
+                    if field.name in campos_visibles:
+                        fieldinfo.addField(field.name, field.name, "VISIBLE", "")
+                    else:
+                        fieldinfo.addField(field.name, field.name, "HIDDEN", "")
+            else:
+                for field in fields:
+                        fieldinfo.addField(field.name, field.name, "VISIBLE", "")
+
+            if "in_memory" in ws:
+                self.ruta=arcpy.MakeTableView_management(self.feature, self.nombre+"_"+str(random.randrange(0,5000))+".lyr",field_info=fieldinfo).getOutput(0)
+            else:
+                self.ruta=arcpy.MakeTableView_management(self.feature, self.nombre+".lyr",field_info=fieldinfo).getOutput(0)
+            self.camposLayer=arcpy.ListFields(self.feature)
+
+        def addjoinCursorMultiple(self,capajoin,llaveobjetivo,llavetabla,camposjoin): # realiza una add join entre dos capas empleando cursores, pero uniendo multiples campos
+            targshp =self.ruta
+            joinshp=capajoin
+            joinfields =camposjoin
+            joindict = {}
+            campo_tipo={}
+            camposjoin1=[]
+            camposjoin1.append(llavetabla)
+            for i in xrange(0,len(camposjoin)):
+                    camposjoin1.append(camposjoin[i])
+            camposjoin=camposjoin1
+            with arcpy.da.SearchCursor(capajoin,camposjoin) as cursor:
+             for row in cursor:
+                llave=row[0]
+                valor=[]
+                for i in xrange(1,len(camposjoin)):
+                    valor.append(row[i])
+                joindict[llave]=valor
+            camposupdate=[]
+            camposupdate.append(llaveobjetivo)
+            for i in xrange(1,len(camposjoin)):
+                    camposupdate.append(camposjoin[i])
+            campos_feature=arcpy.ListFields(capajoin)
+            for campo in campos_feature:
+                campo_tipo[campo.name]=[campo.type]
+
+            clon=self.feature
+
+            for i in xrange(1,len(camposupdate)):
+
+                arcpy.AddField_management(clon, camposupdate[i],str(campo_tipo[camposupdate[i]][0]))
+
+            with arcpy.da.UpdateCursor(clon, camposupdate) as recs:
+                lim_i=len(joinfields)
+                j=0
+                for rec in recs:
+                    keyval = rec[0]
+
+                    if joindict.has_key(keyval):
+
+                        for i in xrange(0,lim_i):
+                            rec[i+1] = joindict[keyval][i]
+
+                    recs.updateRow(rec)
 
 
 ### ------------------validación_de_requerimientos----------------------------
@@ -188,6 +292,7 @@ def principal():
         arcpy.AddError("no se pudieron procesar las secciones: "+str(no_existen))
 
 if __name__ == '__main__':
+    ruta_gdb= os.path.split(capaFinalClusters)[0]
     calculoNearGeneral(capaOrigenIrradiacion, capaObjetoCluster) # asigna a cada cuadro el punto más cercano
     capaOrigenIrradiacion = cambia_caracteres(capaOrigenIrradiacion) # codifica los carácteres especiales para enviarlos al script auxiliar
     capaObjetoCluster = cambia_caracteres(capaObjetoCluster)# codifica los carácteres especiales para enviarlos al script auxiliar
@@ -195,4 +300,5 @@ if __name__ == '__main__':
     campoAreaPoligono = cambia_caracteres(campoAreaPoligono)# codifica los carácteres especiales para enviarlos al script auxiliar
     FolderEntrada = cambia_caracteres(FolderEntrada)# codifica los carácteres especiales para enviarlos al script auxiliar
     principal() # ejecución de la función principal
+    generar_reporte() # función que genera el reporte de loos resultados
 
