@@ -1,6 +1,13 @@
 # Script_Agrupacion_Poligonos_x_Puntos
 Script para generar clusters de polígonos a partir de información de datos puntuales. Este script cuenta con dos versiones. Una versión de 32 bits que utiliza el procesamiento en memoria y los cursores da y una versión que también emplea procesamiento en memoria y los cursores [da](http://desktop.arcgis.com/en/arcmap/latest/analyze/python/data-access-using-cursors.htm), pero que adicionalmente hace uso del procesamiento en paralelo de 64 bits.
 
+## Limitantes y Recomendaciones
+
++ Estas herramientas están diseñadas para funcionar con ArcGis Desktop 10.5  y/o versiones superiores.
++ Debido a que están desarrolladas bajo **ArcGis Desktop** cuya versión de Python es 2.7.13 **no funcionan con ArcGis Pro**.
++ La mayoría de estas herramientas hacen uso del complemento **ArcGIS for Desktop Background Geoprocessing (64 bits) versión 10.5**. Por ello para su correcta ejecución se hace necesario la  instalación de dicho complemento.
+
+
 
 ## Configuración
 
